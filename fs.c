@@ -152,19 +152,36 @@ static int flush_inode(int idx)
 /*
  * Find the first free data block (block number >= 10) and mark it used.
  *
+ * Updates the in-memory bitmap and superblock free_blocks count.
+ * Caller is responsible for flushing bitmap and superblock to disk.
+ *
  * Returns the block number on success, -1 if the disk is full.
  */
 static int alloc_block(void)
 {
+    for (int i = 10; i < MAX_BLOCKS; i++)
+    {
+        if (!(bitmap[i / 8] & (1 << (i % 8))))
+        {
+            bitmap[i / 8] |= (1 << (i % 8));
+            sb.free_blocks--;
+            return i;
+        }
+    }
     return -1;
 }
 
 
 /*
- * Mark a data block as free in the bitmap.
+ * Mark a data block as free in the in-memory bitmap.
+ *
+ * Updates the in-memory bitmap and superblock free_blocks count.
+ * Caller is responsible for flushing bitmap and superblock to disk.
  */
 static void free_block(int block_num)
 {
+    bitmap[block_num / 8] &= ~(1 << (block_num % 8));
+    sb.free_blocks++;
 }
 
 
@@ -432,7 +449,59 @@ int fs_list(char filenames[][MAX_FILENAME], int max_files)
  */
 int fs_write(const char *filename, const void *data, int size)
 {
-    return -1;
+    if (size < 0 || size > MAX_DIRECT_BLOCKS * BLOCK_SIZE)
+        return -2;
+
+    int idx = find_inode(filename);
+    if (idx < 0)
+        return -1;
+
+    int blocks_needed = (size + BLOCK_SIZE - 1) / BLOCK_SIZE;
+
+    /* Check there is enough free space before touching anything */
+    int old_block_count = (inode_table[idx].size + BLOCK_SIZE - 1) / BLOCK_SIZE;
+    int net_new = blocks_needed - old_block_count;
+    if (net_new > sb.free_blocks)
+        return -2;
+
+    /* Free old blocks (updates in-memory bitmap + superblock count) */
+    for (int i = 0; i < old_block_count; i++)
+        free_block(inode_table[idx].blocks[i]);
+    memset(inode_table[idx].blocks, 0, sizeof(inode_table[idx].blocks));
+
+    /* Allocate new blocks and write data block by block */
+    const char *src = (const char *)data;
+    int remaining = size;
+
+    for (int i = 0; i < blocks_needed; i++)
+    {
+        int block_num = alloc_block();
+        if (block_num < 0)
+            return -2;
+
+        inode_table[idx].blocks[i] = block_num;
+
+        /* Zero-pad a full block buffer, copy in however much data we have */
+        char buf[BLOCK_SIZE];
+        memset(buf, 0, BLOCK_SIZE);
+        int to_write = remaining < BLOCK_SIZE ? remaining : BLOCK_SIZE;
+        memcpy(buf, src, to_write);
+
+        if (write_block(block_num, buf) < 0)
+            return -3;
+
+        src      += to_write;
+        remaining -= to_write;
+    }
+
+    /* Update inode size and flush everything to disk */
+    inode_table[idx].size = size;
+
+    if (flush_inode(idx) < 0)    return -3;
+    if (flush_bitmap() < 0)      return -3;
+    if (flush_superblock() < 0)  return -3;
+
+    return 0;
 }
 
 
@@ -447,5 +516,30 @@ int fs_write(const char *filename, const void *data, int size)
  */
 int fs_read(const char *filename, void *buffer, int size)
 {
-    return -1;
+    int idx = find_inode(filename);
+    if (idx < 0)
+        return -1;
+
+    /* Read only as much as the file holds or the buffer fits */
+    int bytes_to_read = inode_table[idx].size < size
+                        ? inode_table[idx].size : size;
+
+    char *dst     = (char *)buffer;
+    int remaining = bytes_to_read;
+    int num_blocks = (inode_table[idx].size + BLOCK_SIZE - 1) / BLOCK_SIZE;
+
+    for (int i = 0; i < num_blocks && remaining > 0; i++)
+    {
+        char buf[BLOCK_SIZE];
+        if (read_block(inode_table[idx].blocks[i], buf) < 0)
+            return -3;
+
+        int to_copy = remaining < BLOCK_SIZE ? remaining : BLOCK_SIZE;
+        memcpy(dst, buf, to_copy);
+
+        dst       += to_copy;
+        remaining -= to_copy;
+    }
+
+    return bytes_to_read;
 }

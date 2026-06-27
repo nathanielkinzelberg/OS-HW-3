@@ -407,7 +407,25 @@ int fs_create(const char *filename)
  */
 int fs_delete(const char *filename)
 {
-    return -1;
+    int idx = find_inode(filename);
+    if (idx < 0)
+        return -1;
+
+    /* Free all data blocks (updates in-memory bitmap + superblock count) */
+    int num_blocks = (inode_table[idx].size + BLOCK_SIZE - 1) / BLOCK_SIZE;
+    for (int i = 0; i < num_blocks; i++)
+        free_block(inode_table[idx].blocks[i]);
+
+    /* Clear the inode slot and give it back */
+    memset(&inode_table[idx], 0, sizeof(inode));
+    sb.free_inodes++;
+
+    /* Flush to disk */
+    if (flush_inode(idx) < 0)    return -2;
+    if (flush_bitmap() < 0)      return -2;
+    if (flush_superblock() < 0)  return -2;
+
+    return 0;
 }
 
 

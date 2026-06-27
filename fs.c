@@ -268,15 +268,65 @@ int fs_format(const char *disk_path)
  */
 int fs_mount(const char *disk_path)
 {
-    return -1;
+    disk_fd = open(disk_path, O_RDWR);
+    if (disk_fd < 0)
+        return -1;
+
+    /* Read superblock from block 0 */
+    char buf[BLOCK_SIZE];
+    if (read_block(0, buf) < 0)
+    {
+        close(disk_fd);
+        disk_fd = -1;
+        return -1;
+    }
+    memcpy(&sb, buf, sizeof(superblock));
+
+    /* Validate: if these don't match it's not our filesystem */
+    if (sb.total_blocks != MAX_BLOCKS || sb.block_size != BLOCK_SIZE)
+    {
+        close(disk_fd);
+        disk_fd = -1;
+        return -1;
+    }
+
+    /* Load bitmap from block 1 */
+    if (read_block(1, buf) < 0)
+    {
+        close(disk_fd);
+        disk_fd = -1;
+        return -1;
+    }
+    memcpy(bitmap, buf, sizeof(bitmap));
+
+    /* Load inode table from blocks 2-9 */
+    for (int i = 0; i < 8; i++)
+    {
+        if (read_block(2 + i, (char *)inode_table + i * BLOCK_SIZE) < 0)
+        {
+            close(disk_fd);
+            disk_fd = -1;
+            return -1;
+        }
+    }
+
+    return 0;
 }
 
 
 /*
  * Flush all cached metadata to disk and close the file descriptor.
+ *
+ * Since we flush after every mutating operation, there is nothing extra
+ * to sync here — we just close the file descriptor cleanly.
  */
 void fs_unmount(void)
 {
+    if (disk_fd >= 0)
+    {
+        close(disk_fd);
+        disk_fd = -1;
+    }
 }
 
 

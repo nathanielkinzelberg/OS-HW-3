@@ -34,7 +34,7 @@ gcc-13 -std=gnu17 -g -Wall -Wextra -I. -o test test.c fs.c
 ./test
 ```
 
-Expected output once implemented:
+Expected output (implementation is complete and passing):
 
 ```
 Removed existing disk file.
@@ -83,7 +83,7 @@ typedef struct {
 - Update `free_blocks` and `free_inodes` whenever allocating or freeing resources.
 - Always write the updated superblock back to disk after any change.
 
-### Inode (128 bytes each, 256 total — blocks 2–9)
+### Inode (256 total — blocks 2–9)
 ```c
 typedef struct {
     int used;                       // 1 if active, 0 if free
@@ -94,6 +94,10 @@ typedef struct {
 ```
 - Max file size: 12 × 4 KB = **48 KB**.
 - `blocks[i]` holds the absolute block number on disk (≥ 10 for data blocks).
+- **Important:** `sizeof(inode) = 88` (not 128 as the spec implies). The compiler adds 3 padding
+  bytes after `name[29]` to align `size` to a 4-byte boundary. The inode table is therefore
+  `88 × 256 = 22,528 bytes`, not 32,768. The implementation handles this correctly by writing
+  the inode table as a raw byte blob (`flush_inode_table`) rather than block-aligned chunks.
 
 ### Block Bitmap (block 1)
 ```c
@@ -187,7 +191,33 @@ For every file operation:
 - All virtual disk files passed to `fs_mount` are valid filesystems previously created by
   `fs_format`. No need to handle corrupted metadata.
 
-## Recommended Implementation Order
+## Implementation Status
+
+All 8 API functions are implemented and the local test passes.
+
+| Function | Status |
+|---|---|
+| `fs_format` | ✅ done |
+| `fs_mount` | ✅ done |
+| `fs_unmount` | ✅ done |
+| `fs_create` | ✅ done |
+| `fs_list` | ✅ done |
+| `fs_write` | ✅ done |
+| `fs_read` | ✅ done |
+| `fs_delete` | ✅ done |
+
+## Implementation Notes
+
+- **`flush_inode_table`** writes the entire inode array as a raw byte blob (one block at a time,
+  partial last block zero-padded). This avoids the cross-block straddling problem that arises
+  because `sizeof(inode) = 88` does not divide evenly into `BLOCK_SIZE = 4096`.
+- **`fs_format` closes `disk_fd`** after writing — `fs_mount` is responsible for opening the disk.
+- **`alloc_block` / `free_block`** update the in-memory bitmap and `sb.free_blocks` only; callers
+  are responsible for calling `flush_bitmap` and `flush_superblock`.
+- **`fs_write` checks space before freeing** old blocks — the file is untouched if the new content
+  won't fit.
+
+## Recommended Implementation Order (for reference)
 1. `fs_format` — create and initialize the disk file
 2. `fs_mount` + `fs_unmount` — open, validate, close
 3. `fs_create` + `fs_list` — inode management
@@ -203,7 +233,7 @@ For every file operation:
 
 ## Submission Checklist
 - [ ] Theory: `theory.ipynb` with typed answers to TQ1–TQ3, names + IDs per the INGInious format.
-- [ ] Programming: a ZIP with `fs.c` (+ any private helper `.c/.h`) — **no** `fs.h`, `test.c`,
-      binaries, or `main()`.
+- [x] Programming: `fs.c` implemented and local test passing.
+- [ ] Package: a ZIP with `fs.c` only — **no** `fs.h`, `test.c`, binaries, or `main()`.
 - [ ] No leftover debug prints.
 - [ ] Verified on INGInious (not only locally).

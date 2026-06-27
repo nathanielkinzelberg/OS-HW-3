@@ -97,30 +97,49 @@ static int write_block(int block_num, const void *buf)
 
 /*
  * Write the in-memory superblock back to block 0.
+ *
+ * superblock is smaller than BLOCK_SIZE, so we zero-pad to a full block
+ * to avoid writing garbage bytes to disk.
  */
 static int flush_superblock(void)
 {
-    return 0;
+    char buf[BLOCK_SIZE];
+    memset(buf, 0, BLOCK_SIZE);
+    memcpy(buf, &sb, sizeof(superblock));
+    return write_block(0, buf);
 }
 
 
 /*
  * Write the in-memory bitmap back to block 1.
+ *
+ * bitmap is 320 bytes (2560 bits), zero-padded to a full block.
  */
 static int flush_bitmap(void)
 {
-    return 0;
+    char buf[BLOCK_SIZE];
+    memset(buf, 0, BLOCK_SIZE);
+    memcpy(buf, bitmap, sizeof(bitmap));
+    return write_block(1, buf);
 }
 
 
 /*
- * Write a single inode back to the correct offset in the inode table on disk.
+ * Write a single inode back to its location in the inode table on disk.
  *
- * Each inode is 128 bytes; inode_table starts at block 2.
+ * Each inode is 128 bytes; the table starts at block 2.
+ * We read the whole block the inode lives in, patch the inode, write it back.
  */
 static int flush_inode(int idx)
 {
-    return 0;
+    int block_num       = 2 + (idx * (int)sizeof(inode)) / BLOCK_SIZE;
+    int offset_in_block = (idx * (int)sizeof(inode)) % BLOCK_SIZE;
+
+    char buf[BLOCK_SIZE];
+    if (read_block(block_num, buf) < 0)
+        return -1;
+    memcpy(buf + offset_in_block, &inode_table[idx], sizeof(inode));
+    return write_block(block_num, buf);
 }
 
 
@@ -196,7 +215,46 @@ static int alloc_inode(void)
  */
 int fs_format(const char *disk_path)
 {
-    return -1;
+    disk_fd = open(disk_path, O_RDWR | O_CREAT | O_TRUNC, 0644);
+    if (disk_fd < 0)
+        return -1;
+
+    /* Extend the file to exactly 10 MB by seeking to the last byte and
+     * writing one zero. Everything in between becomes a zero-filled hole. */
+    if (lseek(disk_fd, (off_t)MAX_BLOCKS * BLOCK_SIZE - 1, SEEK_SET) < 0)
+        return -1;
+    if (write(disk_fd, "\0", 1) != 1)
+        return -1;
+
+    /* Initialize superblock */
+    sb.total_blocks = MAX_BLOCKS;
+    sb.block_size   = BLOCK_SIZE;
+    sb.free_blocks  = MAX_BLOCKS - 10;  /* blocks 0-9 reserved for metadata */
+    sb.total_inodes = MAX_FILES;
+    sb.free_inodes  = MAX_FILES;
+
+    /* Initialize bitmap: mark metadata blocks 0-9 as used, rest free */
+    memset(bitmap, 0, sizeof(bitmap));
+    for (int i = 0; i < 10; i++)
+        bitmap[i / 8] |= (1 << (i % 8));
+
+    /* Initialize inode table: all slots free */
+    memset(inode_table, 0, sizeof(inode_table));
+
+    /* Write everything to disk */
+    if (flush_superblock() < 0) return -1;
+    if (flush_bitmap() < 0)     return -1;
+    for (int i = 0; i < 8; i++)
+    {
+        if (write_block(2 + i, (char *)inode_table + i * BLOCK_SIZE) < 0)
+            return -1;
+    }
+
+    /* Format is complete — close so fs_mount can open it fresh */
+    close(disk_fd);
+    disk_fd = -1;
+
+    return 0;
 }
 
 

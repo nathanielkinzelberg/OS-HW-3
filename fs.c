@@ -181,6 +181,11 @@ static void free_block(int block_num)
  */
 static int find_inode(const char *filename)
 {
+    for (int i = 0; i < MAX_FILES; i++)
+    {
+        if (inode_table[i].used && strncmp(inode_table[i].name, filename, MAX_FILENAME) == 0)
+            return i;
+    }
     return -1;
 }
 
@@ -192,6 +197,11 @@ static int find_inode(const char *filename)
  */
 static int alloc_inode(void)
 {
+    for (int i = 0; i < MAX_FILES; i++)
+    {
+        if (!inode_table[i].used)
+            return i;
+    }
     return -1;
 }
 
@@ -341,7 +351,30 @@ void fs_unmount(void)
  */
 int fs_create(const char *filename)
 {
-    return -1;
+    /* Duplicate check */
+    if (find_inode(filename) >= 0)
+        return -1;
+
+    /* Find a free inode slot */
+    int idx = alloc_inode();
+    if (idx < 0)
+        return -2;
+
+    /* Initialize the inode */
+    inode_table[idx].used = 1;
+    strncpy(inode_table[idx].name, filename, MAX_FILENAME - 1);
+    inode_table[idx].name[MAX_FILENAME - 1] = '\0';
+    inode_table[idx].size = 0;
+    memset(inode_table[idx].blocks, 0, sizeof(inode_table[idx].blocks));
+
+    /* Update superblock */
+    sb.free_inodes--;
+
+    /* Flush to disk */
+    if (flush_inode(idx) < 0)    return -3;
+    if (flush_superblock() < 0)  return -3;
+
+    return 0;
 }
 
 
@@ -371,7 +404,18 @@ int fs_delete(const char *filename)
  */
 int fs_list(char filenames[][MAX_FILENAME], int max_files)
 {
-    return -1;
+    int count = 0;
+
+    for (int i = 0; i < MAX_FILES && count < max_files; i++)
+    {
+        if (inode_table[i].used)
+        {
+            strncpy(filenames[count], inode_table[i].name, MAX_FILENAME);
+            count++;
+        }
+    }
+
+    return count;
 }
 
 

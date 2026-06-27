@@ -125,21 +125,36 @@ static int flush_bitmap(void)
 
 
 /*
- * Write a single inode back to its location in the inode table on disk.
+ * Write the entire in-memory inode table back to disk (blocks 2–9).
  *
- * Each inode is 128 bytes; the table starts at block 2.
- * We read the whole block the inode lives in, patch the inode, write it back.
+ * sizeof(inode) = 88, which does not evenly divide BLOCK_SIZE, so inodes
+ * can straddle block boundaries. Writing the table as a raw byte blob one
+ * block at a time avoids any cross-block patching complexity.
+ *
+ * The last partial block is zero-padded before writing.
  */
-static int flush_inode(int idx)
+static int flush_inode_table(void)
 {
-    int block_num       = 2 + (idx * (int)sizeof(inode)) / BLOCK_SIZE;
-    int offset_in_block = (idx * (int)sizeof(inode)) % BLOCK_SIZE;
-
     char buf[BLOCK_SIZE];
-    if (read_block(block_num, buf) < 0)
-        return -1;
-    memcpy(buf + offset_in_block, &inode_table[idx], sizeof(inode));
-    return write_block(block_num, buf);
+    size_t table_bytes = sizeof(inode_table);   /* 88 * 256 = 22528 */
+
+    for (int i = 0; i < 8; i++)
+    {
+        memset(buf, 0, BLOCK_SIZE);
+        size_t offset = (size_t)i * BLOCK_SIZE;
+
+        if (offset < table_bytes)
+        {
+            size_t to_copy = BLOCK_SIZE;
+            if (offset + BLOCK_SIZE > table_bytes)
+                to_copy = table_bytes - offset;
+            memcpy(buf, (char *)inode_table + offset, to_copy);
+        }
+
+        if (write_block(2 + i, buf) < 0)
+            return -1;
+    }
+    return 0;
 }
 
 
@@ -269,13 +284,9 @@ int fs_format(const char *disk_path)
     memset(inode_table, 0, sizeof(inode_table));
 
     /* Write everything to disk */
-    if (flush_superblock() < 0) return -1;
-    if (flush_bitmap() < 0)     return -1;
-    for (int i = 0; i < 8; i++)
-    {
-        if (write_block(2 + i, (char *)inode_table + i * BLOCK_SIZE) < 0)
-            return -1;
-    }
+    if (flush_superblock() < 0)  return -1;
+    if (flush_bitmap() < 0)      return -1;
+    if (flush_inode_table() < 0) return -1;
 
     /* Format is complete — close so fs_mount can open it fresh */
     close(disk_fd);
@@ -327,14 +338,22 @@ int fs_mount(const char *disk_path)
     memcpy(bitmap, buf, sizeof(bitmap));
 
     /* Load inode table from blocks 2-9 */
+    size_t table_bytes = sizeof(inode_table);
     for (int i = 0; i < 8; i++)
     {
-        if (read_block(2 + i, (char *)inode_table + i * BLOCK_SIZE) < 0)
+        if (read_block(2 + i, buf) < 0)
         {
             close(disk_fd);
             disk_fd = -1;
             return -1;
         }
+        size_t offset = (size_t)i * BLOCK_SIZE;
+        if (offset >= table_bytes)
+            break;
+        size_t to_copy = BLOCK_SIZE;
+        if (offset + BLOCK_SIZE > table_bytes)
+            to_copy = table_bytes - offset;
+        memcpy((char *)inode_table + offset, buf, to_copy);
     }
 
     return 0;
@@ -388,7 +407,7 @@ int fs_create(const char *filename)
     sb.free_inodes--;
 
     /* Flush to disk */
-    if (flush_inode(idx) < 0)    return -3;
+    if (flush_inode_table() < 0) return -3;
     if (flush_superblock() < 0)  return -3;
 
     return 0;
@@ -421,7 +440,7 @@ int fs_delete(const char *filename)
     sb.free_inodes++;
 
     /* Flush to disk */
-    if (flush_inode(idx) < 0)    return -2;
+    if (flush_inode_table() < 0) return -2;
     if (flush_bitmap() < 0)      return -2;
     if (flush_superblock() < 0)  return -2;
 
@@ -515,7 +534,7 @@ int fs_write(const char *filename, const void *data, int size)
     /* Update inode size and flush everything to disk */
     inode_table[idx].size = size;
 
-    if (flush_inode(idx) < 0)    return -3;
+    if (flush_inode_table() < 0) return -3;
     if (flush_bitmap() < 0)      return -3;
     if (flush_superblock() < 0)  return -3;
 

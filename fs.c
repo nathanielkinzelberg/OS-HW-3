@@ -66,6 +66,10 @@ static inode inode_table[MAX_FILES];
  */
 static int read_block(int block_num, void *buf)
 {
+    if (lseek(disk_fd, (off_t)block_num * BLOCK_SIZE, SEEK_SET) < 0)
+        return -1;
+    if (read(disk_fd, buf, BLOCK_SIZE) != BLOCK_SIZE)
+        return -1;
     return 0;
 }
 
@@ -77,6 +81,10 @@ static int read_block(int block_num, void *buf)
  */
 static int write_block(int block_num, const void *buf)
 {
+    if (lseek(disk_fd, (off_t)block_num * BLOCK_SIZE, SEEK_SET) < 0)
+        return -1;
+    if (write(disk_fd, buf, BLOCK_SIZE) != BLOCK_SIZE)
+        return -1;
     return 0;
 }
 

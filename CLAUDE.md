@@ -10,6 +10,19 @@ The exercise has two parts:
   must be typed — hand-written scans are rejected.
 - **Part B — Programming**: implement the `OnlyFiles` block-based filesystem library (`fs.c`).
 
+## Course Materials (relevant lectures & recitations)
+
+Course slides live two directories up from the project root, under
+`../../OS Lectures/` and `../../OS Rectations/` (i.e. `Semester 4/Operating Systems/OS Lectures`
+and `.../OS Rectations`). The materials backing each part of this homework:
+
+| Homework part | Lecture | Recitation |
+|---|---|---|
+| **TQ1** — MLFQ scheduling | `OS Lecture 6 - Scheduling.pdf` | `OS Rec 4 - Scheduling.pdf` |
+| **TQ2** — Demand paging, LRU/Clock | `OS Lecture 7,8,9 - Memory Management.pdf` | `OS Rec 5 - Memory Management.pdf` |
+| **TQ3** — Links, partitions, indirect blocks | `OS Lecture 10, 11 - Filesystems.pdf` | `OS Rec 6 - File Systems.pdf` |
+| **Part B** — `OnlyFiles` implementation | `OS Lecture 10, 11 - Filesystems.pdf` | `OS Rec 6 - File Systems.pdf` |
+
 ## Build & Test
 
 `test.c` includes `"fs.h"`, which lives in the project root, so the include path (`-I.`) is

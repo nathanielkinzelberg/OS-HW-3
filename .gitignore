@@ -1,0 +1,7 @@
+.devcontainer/
+.vscode/
+test
+disk
+*.o
+*.dSYM/
+.DS_Store

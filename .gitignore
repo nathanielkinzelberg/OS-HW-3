@@ -1,5 +1,6 @@
 .devcontainer/
 .vscode/
+.claude/
 test
 disk
 *.o
